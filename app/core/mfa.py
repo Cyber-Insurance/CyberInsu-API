@@ -9,10 +9,7 @@ def generate_mfa_secret() -> str:
 
 
 def get_totp_uri(secret: str, email: str, issuer: str = "CyberInsurance") -> str:
-    return pyotp.totp.TOTP(secret).provisioning_uri(
-        name=email,
-        issuer_name=issuer
-    )
+    return pyotp.totp.TOTP(secret).provisioning_uri(name=email, issuer_name=issuer)
 
 
 def generate_qr_base64(secret: str, email: str) -> str:
@@ -24,5 +21,4 @@ def generate_qr_base64(secret: str, email: str) -> str:
 
 
 def verify_totp(secret: str, code: str) -> bool:
-    totp = pyotp.TOTP(secret)
-    return totp.verify(code, valid_window=1)
+    return pyotp.TOTP(secret).verify(code, valid_window=1)
