@@ -5,11 +5,13 @@ from app.api import auth, admin
 
 app = FastAPI(title=settings.APP_NAME, version="1.0.0")
 
+import os
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://cyberinsu-front-end-production.up.railway.app",  # ← ajoute cette ligne
+        os.getenv("FRONTEND_URL", "https://cyberinsu-front-end-production.up.railway.app"),
     ],
     allow_credentials=True,
     allow_methods=["*"],
