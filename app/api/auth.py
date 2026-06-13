@@ -20,6 +20,14 @@ class MFAVerifyRequest(BaseModel):
     code: str
 
 
+class MFAConfirmRequest(BaseModel):
+    code: str
+
+
+class MFADisableRequest(BaseModel):
+    password: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -86,13 +94,40 @@ def verify_mfa(body: MFAVerifyRequest, db: Session = Depends(get_db)):
 
 @router.post("/setup-mfa", response_model=MFASetupResponse)
 def setup_mfa(current_user: Utilisateur = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.mfa_enabled:
+        raise HTTPException(status_code=400, detail="MFA déjà activé, désactivez-le d'abord")
     secret = generate_mfa_secret()
     qr = generate_qr_base64(secret, current_user.email)
     current_user.mfa_secret = secret
+    db.commit()
+    return MFASetupResponse(secret=secret, qr_code=qr)
+
+
+@router.post("/confirm-mfa")
+def confirm_mfa(body: MFAConfirmRequest, current_user: Utilisateur = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not current_user.mfa_secret:
+        raise HTTPException(status_code=400, detail="Appelez /setup-mfa d'abord")
+    if current_user.mfa_enabled:
+        raise HTTPException(status_code=400, detail="MFA déjà activé")
+    if not verify_totp(current_user.mfa_secret, body.code):
+        raise HTTPException(status_code=401, detail="Code invalide")
     current_user.mfa_enabled = True
     db.commit()
-    log_action(db, current_user.id_user, "mfa_setup")
-    return MFASetupResponse(secret=secret, qr_code=qr)
+    log_action(db, current_user.id_user, "mfa_enabled")
+    return {"message": "MFA activé"}
+
+
+@router.post("/disable-mfa")
+def disable_mfa(body: MFADisableRequest, current_user: Utilisateur = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not current_user.mfa_enabled:
+        raise HTTPException(status_code=400, detail="MFA non activé")
+    if not verify_password(body.password, current_user.password):
+        raise HTTPException(status_code=401, detail="Mot de passe incorrect")
+    current_user.mfa_enabled = False
+    current_user.mfa_secret = None
+    db.commit()
+    log_action(db, current_user.id_user, "mfa_disabled")
+    return {"message": "MFA désactivé"}
 
 
 @router.get("/me")
@@ -102,5 +137,6 @@ def me(current_user: Utilisateur = Depends(get_current_user)):
         "email": current_user.email,
         "role": current_user.role.status,
         "mfa_enabled": current_user.mfa_enabled,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
         "permissions": [p.nom for p in current_user.role.permissions]
     }

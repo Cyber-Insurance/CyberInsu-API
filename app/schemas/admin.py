@@ -64,3 +64,17 @@ class StatsResponse(BaseModel):
     total_audit_logs: int
     recent_actions: List[dict]
     mfa_enabled_count: int
+
+
+class SettingsUpdate(BaseModel):
+    app_name:            Optional[str]  = None
+    maintenance_mode:    Optional[bool] = None
+    allow_registrations: Optional[bool] = None
+    require_mfa:         Optional[bool] = None
+    two_factor_required: Optional[bool] = None
+    session_timeout:     Optional[int]  = None
+    password_policy:     Optional[str]  = None
+    max_upload_size:     Optional[int]  = None
+    backup_frequency:    Optional[str]  = None
+    backup_retention:    Optional[int]  = None
+    email_notifications: Optional[bool] = None

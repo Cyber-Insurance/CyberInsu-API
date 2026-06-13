@@ -1,16 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from typing import Optional, List
 import bcrypt
+import time
 
 from app.db.database import get_db
-from app.db.models import Utilisateur, Role, Permission, RolePermission, AuditLog
+from app.db.models import Utilisateur, Role, Permission, RolePermission, AuditLog, PlatformSettings
 from app.core.dependencies import require_permission, get_current_user
 from app.schemas.admin import (
     UserCreate, UserUpdate, UserResponse,
     RoleResponse, PermissionResponse, RolePermissionsUpdate,
-    AuditLogResponse, StatsResponse
+    AuditLogResponse, StatsResponse, SettingsUpdate
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -255,6 +256,84 @@ def update_role_permissions(
             "permissions": [{"id": p.id_permission, "nom": p.nom} for p in role.permissions]
         }
     }
+
+
+# ─── HEALTH CHECK ───────────────────────────────────────────────────
+
+@router.get("/health")
+def get_health(
+    db: Session = Depends(get_db),
+    current_user: Utilisateur = Depends(require_permission("gerer_utilisateurs"))
+):
+    # Latence DB réelle
+    t0 = time.perf_counter()
+    db.execute(text("SELECT 1"))
+    db_ms = round((time.perf_counter() - t0) * 1000, 1)
+
+    # Nombre total d'enregistrements dans les tables principales
+    n_users = db.query(func.count(Utilisateur.id_user)).scalar()
+    n_logs  = db.query(func.count(AuditLog.id_log)).scalar()
+
+    def db_status(ms):
+        if ms < 50:  return "ok"
+        if ms < 200: return "warn"
+        return "error"
+
+    return {
+        "api":     {"status": "ok",               "value": None},
+        "db":      {"status": db_status(db_ms),   "value": db_ms},
+        "auth":    {"status": "ok",               "value": None},
+        "storage": {"status": "ok",               "value": n_users + n_logs},
+    }
+
+
+# ─── PLATFORM SETTINGS ──────────────────────────────────────────────
+
+def _get_or_create_settings(db: Session) -> PlatformSettings:
+    s = db.query(PlatformSettings).filter(PlatformSettings.id == 1).first()
+    if not s:
+        s = PlatformSettings(id=1)
+        db.add(s)
+        db.commit()
+        db.refresh(s)
+    return s
+
+
+@router.get("/settings")
+def get_settings(
+    db: Session = Depends(get_db),
+    current_user: Utilisateur = Depends(require_permission("gerer_utilisateurs"))
+):
+    s = _get_or_create_settings(db)
+    return {
+        "app_name":            s.app_name,
+        "maintenance_mode":    s.maintenance_mode,
+        "allow_registrations": s.allow_registrations,
+        "require_mfa":         s.require_mfa,
+        "two_factor_required": s.two_factor_required,
+        "session_timeout":     s.session_timeout,
+        "password_policy":     s.password_policy,
+        "max_upload_size":     s.max_upload_size,
+        "backup_frequency":    s.backup_frequency,
+        "backup_retention":    s.backup_retention,
+        "email_notifications": s.email_notifications,
+        "updated_at":          s.updated_at.isoformat() if s.updated_at else None,
+    }
+
+
+@router.put("/settings")
+def update_settings(
+    body: SettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: Utilisateur = Depends(require_permission("gerer_utilisateurs"))
+):
+    s = _get_or_create_settings(db)
+    for field, value in body.model_dump(exclude_none=True).items():
+        setattr(s, field, value)
+    s.updated_by = current_user.id_user
+    db.commit()
+    log_action(db, current_user.id_user, "update_settings", "platform_settings", 1)
+    return {"message": "Paramètres mis à jour"}
 
 
 # ─── AUDIT LOGS ─────────────────────────────────────────────────────
